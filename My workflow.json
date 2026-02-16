@@ -1,0 +1,213 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "feedUrl": "http://192.168.0.59:8080/telegram/channel/rageintel"
+      },
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1a9d33cf-70b4-41a2-a9c6-e2bcf439ec3b",
+      "name": "RSS Feed Trigger"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "title"
+            },
+            {
+              "fieldToAggregate": "content:encodedSnippet",
+              "renameField": true,
+              "outputFieldName": "content"
+            },
+            {
+              "fieldToAggregate": "pubDate"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        208,
+        0
+      ],
+      "id": "000dec6d-9737-4048-a6c3-482fea4cee7f",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Current Analysis Date: {{ $now.toDateTime().format('yyyy-MM-dd HH:MM') }}\n\n<task>\nAnalyze the news feed below. Filter for high-interest stories, verify them using the scraper, and output the JSON report.\n</task>\n<raw_data>\n{{ $json.data.map(i => `\n  <news_item>\n    <title>${i.title}</title>\n    <content>${i.content.replace(/\\n/g, \" \")}</content>\n    <date>${i.date}</date>\n  </news_item>\n`).join('') }}\n</raw_data>\n\n\nYou are currently in testing mode please just exit as done. Do not call anything. ",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "### ROLE\nYou are a Senior Intelligence Analyst and Fact-Checker. Your task is to process a list of raw news items, verify them, and output a strict JSON report of high-impact stories.\n\n### PROCESS\n1. **SCAN & FILTER:**\n   - Review the input list in the <raw_data> tags.\n   - Select ONLY stories involving major geopolitical shifts, significant technology breakthroughs, or urgent security alerts.\n   - IGNORE celebrity news, sports, or minor repetitive updates.\n\n2. **VERIFY:**\n   - For every selected story, you MUST use the `scrape_article` tool to read the full context from the link.\n   - Compare the scraped text against the short claim in the feed.\n\n3. **ANALYZE RESULTS:**\n   - Discard stories flagged as \"Fake\" or \"Debunked\".\n   - Keep stories marked as \"True\", \"Plausible\", or \"Unverified\".\n\n4. **OUTPUT (STRICT JSON):**\n   - You must output a valid JSON object containing a list called `analyzed_news`.\n   - **CRITICAL:** The `content` field MUST be an exact copy of the original text from the input. Do not summarize or rewrite the content.\n   - Do not include any conversational text."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        624,
+        0
+      ],
+      "id": "b9a1372d-928c-4e3d-a644-e26b7b3b10a9",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the raw arrays from your Aggregate node\nconst titles = items[0].json.title || [];\nconst contents = items[0].json.content || [];\nconst dates = items[0].json.pubDate || [];\n\n// Zip them together into a clean list\nconst combined = titles.map((t, index) => ({\n  title: t,\n  content: contents[index],\n  date: dates[index]\n}));\n\n// Return as a single object with a \"data\" property for the AI\nreturn { json: { data: combined } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "f2e9a686-c4e7-4c4d-aa73-fcccb579a61a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "model": "stepfun/step-3.5-flash:free",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        496,
+        208
+      ],
+      "id": "fc794cfa-2293-41a4-879d-abbf4864c016",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "kFseS6SKsNQhzSKN",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Use the tool to think about something. It will not obtain new information or change the database, but just append the thought to the log. Use it when complex reasoning or some cache memory is needed.\n\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        336
+      ],
+      "id": "9ba18539-5a10-44b5-ba39-ee7f92803c5e",
+      "name": "Think"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "={\n  \"type\": \"object\",\n  \"properties\": {\n    \"analyzed_news\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"content\": {\n            \"type\": \"string\",\n            \"description\": \"Must be an exact match from the input list\",\n            \"enum\": {{ JSON.stringify($json.data.map(i => i.content)) }} \n          },\n          \"link\": {\n            \"type\": \"string\",\n            \"description\": \"The URL of the article\"\n          },\n          \"category\": {\n            \"type\": \"string\",\n            \"enum\": [\"ukraine-russia\", \"middle-east\", \"Europe\", \"USA\", \"other\"]\n          },\n          \"verification\": {\n            \"type\": \"string\",\n            \"enum\": [\"probably-true\", \"probably-false\", \"madeup\", \"unverifiable\"]\n          },\n          \"verification_reasoning\": {\n            \"type\": \"string\",\n            \"description\": \"Short explanation of why you gave this verification status based on the scraped tool output.\"\n          },\n          \"interest_reason\": {\n            \"type\": \"string\",\n            \"description\": \"Why is this geopolitically significant?\"\n          }\n        },\n        \"required\": [\"content\", \"link\", \"category\", \"verification\", \"verification_reasoning\"]\n      }\n    }\n  }\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        880,
+        352
+      ],
+      "id": "bb9c1ba8-f5f1-4a6e-9b5c-5ba4c05ce049",
+      "name": "Structured Output Parser"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "RSS Feed Trigger": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "000af47a-0458-4704-9b95-574397ba1bd7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "00722f80e915ec24aa1fbc5f9a229e8dacb8dc6f4b6ff9fa442ce010e18b2568"
+  },
+  "id": "bGexIeMIxaUN5Or2",
+  "tags": []
+}

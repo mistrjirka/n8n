@@ -1,6 +1,13 @@
 import type { AgentRunnableSequence } from '@langchain/classic/agents';
 import type { BaseChatMemory } from '@langchain/classic/memory';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type {
+	EngineRequest,
+	EngineResponse,
+	IExecuteFunctions,
+	ISupplyDataFunctions,
+} from 'n8n-workflow';
+
 import {
 	buildResponseMetadata,
 	createEngineRequests,
@@ -10,12 +17,6 @@ import {
 	type RequestResponseMetadata,
 } from '@utils/agent-execution';
 import { getTracingConfig } from '@utils/tracing';
-import type {
-	EngineRequest,
-	EngineResponse,
-	IExecuteFunctions,
-	ISupplyDataFunctions,
-} from 'n8n-workflow';
 
 import { SYSTEM_MESSAGE } from '../../prompt';
 import type { AgentResult } from '../types';
@@ -57,6 +58,43 @@ export async function runAgent(
 	// Check if streaming is actually available
 	const isStreamingAvailable = 'isStreaming' in ctx ? ctx.isStreaming?.() : undefined;
 
+	const debugCallback = {
+		handleLLMStart: (
+			_llm: any,
+			_prompts: string[],
+			_runId: string,
+			_parentRunId?: string,
+			extraParams?: any,
+		) => {
+			console.log('--- DEBUG: LLM Request ---');
+			const options = (extraParams?.invocation_params || extraParams) as any;
+			if (options?.response_format) {
+				console.log('Response Format:', JSON.stringify(options.response_format, null, 2));
+			}
+			if (options?.tools) {
+				console.log('Tools count:', options.tools.length);
+			}
+			if (options?.tool_choice) {
+				console.log('Tool Choice:', JSON.stringify(options.tool_choice, null, 2));
+			}
+			console.log('---------------------------');
+		},
+		handleLLMError: (err: any) => {
+			console.log('--- DEBUG: LLM Error ---');
+			console.error('Error Message:', err.message);
+			if (err.cause) {
+				console.error('Error Cause:', JSON.stringify(err.cause, null, 2));
+			}
+			// Attempt to extract response data if available (e.g. from axios or fetch in underlying driver)
+			if (err.response?.data) {
+				console.error('Provider Response Data:', JSON.stringify(err.response.data, null, 2));
+			} else if (err.output?.errors) {
+				console.error('Provider Errors:', JSON.stringify(err.output.errors, null, 2));
+			}
+			console.log('------------------------');
+		},
+	};
+
 	if (
 		'isStreaming' in ctx &&
 		options.enableStreaming &&
@@ -64,16 +102,27 @@ export async function runAgent(
 		ctx.getNode().typeVersion >= 2.1
 	) {
 		const chatHistory = await loadMemory(memory, model, options.maxTokensFromMemory);
-		const eventStream = executor.withConfig(getTracingConfig(ctx)).streamEvents(
-			{
-				...invokeParams,
-				chat_history: chatHistory,
-			},
-			{
-				version: 'v2',
-				...executeOptions,
-			},
-		);
+		const tracingConfig = getTracingConfig(ctx);
+		const existingCallbacks = (tracingConfig.callbacks as any) || [];
+		const callbacksArray = Array.isArray(existingCallbacks)
+			? existingCallbacks
+			: [existingCallbacks];
+
+		const eventStream = executor
+			.withConfig({
+				...tracingConfig,
+				callbacks: [debugCallback, ...callbacksArray] as any,
+			})
+			.streamEvents(
+				{
+					...invokeParams,
+					chat_history: chatHistory,
+				},
+				{
+					version: 'v2',
+					...executeOptions,
+				},
+			);
 
 		const result = await processEventStream(ctx, eventStream, itemIndex);
 
@@ -101,10 +150,21 @@ export async function runAgent(
 		// Handle regular execution
 		const chatHistory = await loadMemory(memory, model, options.maxTokensFromMemory);
 
-		const modelResponse = await executor.withConfig(getTracingConfig(ctx)).invoke({
-			...invokeParams,
-			chat_history: chatHistory,
-		});
+		const tracingConfig = getTracingConfig(ctx);
+		const existingCallbacks = (tracingConfig.callbacks as any) || [];
+		const callbacksArray = Array.isArray(existingCallbacks)
+			? existingCallbacks
+			: [existingCallbacks];
+
+		const modelResponse = await executor
+			.withConfig({
+				...tracingConfig,
+				callbacks: [debugCallback, ...callbacksArray] as any,
+			})
+			.invoke({
+				...invokeParams,
+				chat_history: chatHistory,
+			});
 
 		if ('returnValues' in modelResponse) {
 			// Save conversation to memory including any tool call context

@@ -55,8 +55,8 @@ export async function prepareItemContext(
 	}
 
 	const outputParser = await getOptionalOutputParser(ctx, itemIndex);
-	const tools = await getTools(ctx, outputParser);
 	const options = ctx.getNodeParameter('options', itemIndex) as AgentOptions;
+	const tools = await getTools(ctx, outputParser, options.structuredOutputMethod);
 
 	if (options.enableStreaming === undefined) {
 		options.enableStreaming = true;

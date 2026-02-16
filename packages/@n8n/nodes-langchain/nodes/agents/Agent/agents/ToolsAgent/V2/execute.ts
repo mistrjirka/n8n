@@ -46,8 +46,23 @@ export function createAgentExecutor(
 	memory?: BaseChatMemory,
 	fallbackModel?: BaseChatModel | null,
 ) {
+	// Pre-bind tools with strict mode to enforce API-level schema validation on tool calls.
+	// bindTools is validated to exist in getChatModel(); strict is a provider-specific option.
+	const bindOptions: Record<string, unknown> = { strict: true };
+	if (outputParser) {
+		bindOptions.tool_choice = {
+			type: 'function',
+			function: { name: 'format_final_json_response' },
+		};
+	}
+	console.log('--- Debug: V2 execute ---');
+	console.log('Bind Options:', JSON.stringify(bindOptions, null, 2));
+	console.log('Tools Count:', tools.length);
+	console.log('-------------------------');
+
+	const modelWithStrictTools = model.bindTools!(tools, bindOptions as any);
 	const agent = createToolCallingAgent({
-		llm: model,
+		llm: modelWithStrictTools,
 		tools,
 		prompt,
 		streamRunnable: false,
@@ -55,8 +70,9 @@ export function createAgentExecutor(
 
 	let fallbackAgent: AgentRunnableSequence | undefined;
 	if (fallbackModel) {
+		const fallbackWithStrictTools = fallbackModel.bindTools!(tools, bindOptions as any);
 		fallbackAgent = createToolCallingAgent({
-			llm: fallbackModel,
+			llm: fallbackWithStrictTools,
 			tools,
 			prompt,
 			streamRunnable: false,

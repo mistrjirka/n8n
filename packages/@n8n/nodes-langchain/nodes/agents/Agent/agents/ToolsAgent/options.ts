@@ -39,4 +39,30 @@ export const commonOptions: INodeProperties[] = [
 		description:
 			'Whether or not binary images should be automatically passed through to the agent as image type messages',
 	},
+	{
+		displayName: 'Structured Output Method',
+		name: 'structuredOutputMethod',
+		type: 'options',
+		default: 'toolCalling',
+		description:
+			"How to enforce structured output when an output parser is connected. Tool Calling uses a dedicated tool that the model must call. JSON Schema constrains the model's text output directly — useful for free models that support structured output but not tool calling.",
+		displayOptions: {
+			show: {
+				'/hasOutputParser': [true],
+			},
+		},
+		options: [
+			{
+				name: 'Tool Calling (Default)',
+				value: 'toolCalling',
+				description: 'Uses format_final_json_response tool with tool_choice: required',
+			},
+			{
+				name: 'JSON Schema (Free Models)',
+				value: 'jsonSchema',
+				description:
+					'Uses response_format: json_schema — works with models that support structured output but not tool calling',
+			},
+		],
+	},
 ];

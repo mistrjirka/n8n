@@ -10,6 +10,7 @@ import { BINARY_ENCODING, jsonParse, NodeConnectionTypes, NodeOperationError } f
 import type { IExecuteFunctions, ISupplyDataFunctions, IWebhookFunctions } from 'n8n-workflow';
 import type { ZodObject } from 'zod';
 import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { isChatInstance } from '@n8n/ai-utilities';
 import { getConnectedTools } from '@utils/helpers';
@@ -385,18 +386,26 @@ export async function getOptionalMemory(
  * Retrieves the connected tools and (if an output parser is defined)
  * appends a structured output parser tool.
  *
+ * When structuredOutputMethod is 'jsonSchema', the format_final_json_response tool
+ * is NOT added — instead, the model's text output is constrained via response_format.
+ *
  * @param ctx - The execution context
  * @param outputParser - The optional output parser
+ * @param structuredOutputMethod - How to enforce structured output ('toolCalling' | 'jsonSchema')
  * @returns The array of connected tools
  */
 export async function getTools(
 	ctx: IExecuteFunctions | ISupplyDataFunctions | IWebhookFunctions,
 	outputParser?: N8nOutputParser,
+	structuredOutputMethod: 'toolCalling' | 'jsonSchema' = 'toolCalling',
 ): Promise<Array<DynamicStructuredTool | Tool>> {
 	const tools = (await getConnectedTools(ctx, true, false)) as Array<DynamicStructuredTool | Tool>;
 
-	// If an output parser is available, create a dynamic tool to validate the final output.
-	if (outputParser) {
+	// If an output parser is available and using tool calling method,
+	// create a dynamic tool to validate the final output.
+	// When using jsonSchema method, we skip this tool — the model's text output
+	// is constrained via response_format instead.
+	if (outputParser && structuredOutputMethod !== 'jsonSchema') {
 		const schema = getOutputParserSchema(outputParser);
 		const structuredOutputParserTool = new DynamicStructuredTool({
 			schema,
@@ -409,6 +418,77 @@ export async function getTools(
 		tools.push(structuredOutputParserTool);
 	}
 	return tools;
+}
+
+/**
+ * Building response_format config object from the output parser's Zod schema.
+ * Used when structuredOutputMethod is 'jsonSchema' to constrain the model's
+ * text output to match the schema, without requiring a tool call.
+ *
+ * @param outputParser - The output parser containing the schema
+ * @returns The response_format config object for the model
+ */
+export function getResponseFormatConfig(outputParser: N8nOutputParser): Record<string, unknown> {
+	const zodSchema = getOutputParserSchema(outputParser);
+	// Use 'openaiStrict' target to ensure compatibility with OpenAI's strict mode
+	// This automatically handles 'additionalProperties: false' and requires all fields
+	const jsonSchema = zodToJsonSchema(zodSchema, {
+		target: 'openaiStrict',
+	} as any);
+
+	// Manually ensure strictness as a fallback because zod-to-json-schema's openaiStrict target
+	// might miss some nested requirements in certain environments.
+	const strictSchema = makeSchemaStrict(jsonSchema);
+
+	const config = {
+		type: 'json_schema',
+		json_schema: {
+			name: 'structured_response',
+			strict: true,
+			schema: strictSchema,
+		},
+	};
+
+	console.log('--- Debug: JSON Schema for Response Format ---');
+	console.log(JSON.stringify(config, null, 2));
+	console.log('----------------------------------------------');
+
+	return config;
+}
+
+/**
+ * Recursively ensures that a JSON schema is compatible with OpenAI's strict mode.
+ * - Sets additionalProperties: false for all objects.
+ * - Ensures all properties are in the 'required' array.
+ */
+function makeSchemaStrict(schema: any): any {
+	if (typeof schema !== 'object' || schema === null) return schema;
+
+	const newSchema = { ...schema };
+
+	if (schema.type === 'object' || schema.properties) {
+		newSchema.additionalProperties = false;
+		if (schema.properties) {
+			newSchema.required = Object.keys(schema.properties);
+			const newProperties: any = {};
+			for (const key of newSchema.required) {
+				newProperties[key] = makeSchemaStrict(schema.properties[key]);
+			}
+			newSchema.properties = newProperties;
+		}
+	} else if (schema.type === 'array' || schema.items) {
+		if (schema.items) {
+			newSchema.items = makeSchemaStrict(schema.items);
+		}
+	} else if (schema.anyOf) {
+		newSchema.anyOf = schema.anyOf.map(makeSchemaStrict);
+	} else if (schema.allOf) {
+		newSchema.allOf = schema.allOf.map(makeSchemaStrict);
+	} else if (schema.oneOf) {
+		newSchema.oneOf = schema.oneOf.map(makeSchemaStrict);
+	}
+
+	return newSchema;
 }
 
 /**

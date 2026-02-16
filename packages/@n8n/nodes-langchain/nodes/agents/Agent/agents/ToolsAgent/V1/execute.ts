@@ -1,4 +1,5 @@
 import type { BaseLanguageModel } from '@langchain/core/language_models/base';
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { RunnableSequence } from '@langchain/core/runnables';
 import { AgentExecutor, createToolCallingAgent } from '@langchain/classic/agents';
 import omit from 'lodash/omit';
@@ -70,8 +71,18 @@ export async function toolsAgentExecute(this: IExecuteFunctions): Promise<INodeE
 			const prompt = preparePrompt(messages);
 
 			// Create the base agent that calls tools.
+			// Pre-bind tools with strict mode to enforce API-level schema validation.
+			// bindTools is validated to exist in getChatModel(); strict is a provider-specific option.
+			const bindOptions: Record<string, unknown> = { strict: true };
+			if (outputParser) {
+				bindOptions.tool_choice = {
+					type: 'function',
+					function: { name: 'format_final_json_response' },
+				};
+			}
+			const modelWithStrictTools = (model as BaseChatModel).bindTools!(tools, bindOptions as any);
 			const agent = createToolCallingAgent({
-				llm: model,
+				llm: modelWithStrictTools,
 				tools,
 				prompt,
 				streamRunnable: false,

@@ -23,4 +23,5 @@ export type AgentOptions = {
 	passthroughBinaryImages?: boolean;
 	enableStreaming?: boolean;
 	maxTokensFromMemory?: number;
+	structuredOutputMethod?: 'toolCalling' | 'jsonSchema';
 };
