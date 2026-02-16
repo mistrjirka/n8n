@@ -1,0 +1,13 @@
+diff --git a/lib/types.js b/lib/types.js
+index 1234567..abcdefg 100644
+--- a/lib/types.js
++++ b/lib/types.js
+@@ -19,7 +19,7 @@
+     util = require('util');
+
+ var Buffer = buffer.Buffer;
+-var SlowBuffer = buffer.SlowBuffer;
++var SlowBuffer = buffer.SlowBuffer || function(size) { return Buffer.allocUnsafe(size); };
+
+ // Convenience imports.
+ var Tap = utils.Tap;

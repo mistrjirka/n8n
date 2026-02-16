@@ -66,34 +66,177 @@ export async function runAgent(
 			_parentRunId?: string,
 			extraParams?: any,
 		) => {
-			console.log('--- DEBUG: LLM Request ---');
+			console.log('=== DEBUG: handleLLMStart ===');
+			console.log('[LLM] Serialized LLM info:', JSON.stringify(_llm, null, 2));
+			console.log('[LLM] Number of prompt messages:', _prompts?.length);
 			const options = (extraParams?.invocation_params || extraParams) as any;
-			if (options?.response_format) {
-				console.log('Response Format:', JSON.stringify(options.response_format, null, 2));
+			if (options) {
+				normalizeInvocationToolSchemas(options);
+				console.log('[LLM] All invocation_params keys:', Object.keys(options));
+				if (options.response_format) {
+					console.log('[LLM] response_format:', JSON.stringify(options.response_format, null, 2));
+				} else {
+					console.log('[LLM] response_format: NOT PRESENT in invocation_params');
+				}
+				if (options.tools) {
+					console.log('[LLM] tools count:', options.tools.length);
+					console.log(
+						'[LLM] tool names:',
+						options.tools.map((t: any) => t?.function?.name ?? t?.name ?? 'unknown'),
+					);
+					// Log full tool schemas for debugging
+					console.log('[LLM] tools (full):');
+					console.log(JSON.stringify(options.tools, null, 2));
+				}
+				if (options.tool_choice) {
+					console.log('[LLM] tool_choice:', JSON.stringify(options.tool_choice, null, 2));
+				}
+				if (options.model) {
+					console.log('[LLM] model:', options.model);
+				}
+				// Log any other kwargs that might affect the request
+				const importantKeys = ['strict', 'stream', 'temperature', 'max_tokens', 'model_kwargs'];
+				for (const key of importantKeys) {
+					if (options[key] !== undefined) {
+						console.log(`[LLM] ${key}:`, JSON.stringify(options[key]));
+					}
+				}
+			} else {
+				console.log('[LLM] extraParams is empty/undefined');
 			}
-			if (options?.tools) {
-				console.log('Tools count:', options.tools.length);
-			}
-			if (options?.tool_choice) {
-				console.log('Tool Choice:', JSON.stringify(options.tool_choice, null, 2));
-			}
-			console.log('---------------------------');
+			console.log('=== DEBUG: handleLLMStart END ===');
 		},
 		handleLLMError: (err: any) => {
-			console.log('--- DEBUG: LLM Error ---');
-			console.error('Error Message:', err.message);
-			if (err.cause) {
-				console.error('Error Cause:', JSON.stringify(err.cause, null, 2));
+			console.log('=== DEBUG: handleLLMError ===');
+			console.error('[ERR] Error constructor:', err?.constructor?.name);
+			console.error('[ERR] Error message:', err?.message);
+			console.error('[ERR] Error name:', err?.name);
+			// Full error with all properties (including non-enumerable)
+			try {
+				const allProps = Object.getOwnPropertyNames(err);
+				console.error('[ERR] All error property names:', allProps);
+				for (const prop of allProps) {
+					if (prop === 'stack') continue; // skip stack trace for brevity
+					try {
+						const val = err[prop];
+						if (typeof val === 'object' && val !== null) {
+							console.error(`[ERR] err.${prop}:`, JSON.stringify(val, null, 2));
+						} else {
+							console.error(`[ERR] err.${prop}:`, val);
+						}
+					} catch {
+						console.error(`[ERR] err.${prop}: [could not serialize]`);
+					}
+				}
+			} catch {
+				console.error('[ERR] Could not enumerate error properties');
 			}
-			// Attempt to extract response data if available (e.g. from axios or fetch in underlying driver)
-			if (err.response?.data) {
-				console.error('Provider Response Data:', JSON.stringify(err.response.data, null, 2));
-			} else if (err.output?.errors) {
-				console.error('Provider Errors:', JSON.stringify(err.output.errors, null, 2));
+			// Walk the cause chain to find the original HTTP error
+			let current = err;
+			let depth = 0;
+			while (current && depth < 10) {
+				if (current.cause && current.cause !== current) {
+					current = current.cause;
+					depth++;
+					console.error(
+						`[ERR] cause chain depth ${depth}:`,
+						current?.constructor?.name,
+						current?.message,
+					);
+					// OpenAI SDK errors store the body in .error
+					if (current.error) {
+						try {
+							console.error(
+								`[ERR] cause.error (raw API body):`,
+								JSON.stringify(current.error, null, 2),
+							);
+						} catch {
+							console.error(`[ERR] cause.error:`, String(current.error));
+						}
+					}
+					if (current.status) {
+						console.error(`[ERR] cause.status:`, current.status);
+					}
+					if (current.response) {
+						console.error(`[ERR] cause.response.status:`, current.response?.status);
+						if (current.response.body) {
+							console.error(`[ERR] cause.response.body:`, String(current.response.body));
+						}
+					}
+					// Some errors have the raw body in .body
+					if (current.body) {
+						try {
+							console.error(`[ERR] cause.body:`, JSON.stringify(current.body, null, 2));
+						} catch {
+							console.error(`[ERR] cause.body:`, String(current.body));
+						}
+					}
+				} else {
+					break;
+				}
 			}
-			console.log('------------------------');
+			// Direct access for common shapes
+			if (err.response) {
+				console.error('[ERR] err.response.status:', err.response.status);
+				console.error('[ERR] err.response.statusText:', err.response.statusText);
+				if (err.response.data) {
+					console.error('[ERR] err.response.data:', JSON.stringify(err.response.data, null, 2));
+				}
+			}
+			if (err.status) {
+				console.error('[ERR] err.status:', err.status);
+			}
+			if (err.code) {
+				console.error('[ERR] err.code:', err.code);
+			}
+			if (err.error) {
+				console.error('[ERR] err.error:', JSON.stringify(err.error, null, 2));
+			}
+			// OpenAI SDK specific
+			if (err.headers) {
+				console.error('[ERR] err.headers:', JSON.stringify(err.headers, null, 2));
+			}
+			console.log('=== DEBUG: handleLLMError END ===');
 		},
 	};
+
+	function normalizeInvocationToolSchemas(options: any): void {
+		if (!Array.isArray(options?.tools)) return;
+
+		for (const tool of options.tools) {
+			const fn = tool?.function;
+			if (!fn || typeof fn !== 'object') continue;
+
+			fn.strict = true;
+
+			const parameters = fn.parameters;
+			if (!parameters || typeof parameters !== 'object') continue;
+
+			normalizeToolParametersSchema(parameters);
+		}
+	}
+
+	function normalizeToolParametersSchema(schema: any): void {
+		if (!schema || typeof schema !== 'object') return;
+
+		delete schema.$schema;
+
+		if (schema.type === 'object' || schema.properties) {
+			schema.additionalProperties = false;
+			if (schema.properties && typeof schema.properties === 'object') {
+				const keys = Object.keys(schema.properties);
+				schema.required = keys;
+				for (const key of keys) {
+					normalizeToolParametersSchema(schema.properties[key]);
+				}
+			}
+		}
+
+		if (schema.items) normalizeToolParametersSchema(schema.items);
+		if (Array.isArray(schema.anyOf)) schema.anyOf.forEach(normalizeToolParametersSchema);
+		if (Array.isArray(schema.oneOf)) schema.oneOf.forEach(normalizeToolParametersSchema);
+		if (Array.isArray(schema.allOf)) schema.allOf.forEach(normalizeToolParametersSchema);
+	}
 
 	if (
 		'isStreaming' in ctx &&

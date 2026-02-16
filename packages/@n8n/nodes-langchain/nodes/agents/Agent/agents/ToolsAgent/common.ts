@@ -264,6 +264,28 @@ export function handleParsedStepOutput(
 }
 
 /**
+ * Recursively walks an object/array and replaces any string values that appear
+ * in the sanitized→original enum mapping with their original (pre-sanitization)
+ * values. This restores newlines/tabs that were stripped for strict-mode compatibility.
+ */
+export function restoreEnumValues(output: unknown, enumMapping: Map<string, string>): unknown {
+	if (typeof output === 'string') {
+		return enumMapping.get(output) ?? output;
+	}
+	if (Array.isArray(output)) {
+		return output.map((item) => restoreEnumValues(item, enumMapping));
+	}
+	if (output !== null && typeof output === 'object') {
+		const result: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
+			result[key] = restoreEnumValues(value, enumMapping);
+		}
+		return result;
+	}
+	return output;
+}
+
+/**
  * Parses agent steps using the provided output parser.
  * If the agent used the 'format_final_json_response' tool, the output is parsed accordingly.
  *
@@ -273,10 +295,17 @@ export function handleParsedStepOutput(
  * @returns The parsed steps with the final output
  */
 export const getAgentStepsParser =
-	(outputParser?: N8nOutputParser, memory?: BaseChatMemory) =>
+	(
+		outputParser?: N8nOutputParser,
+		memory?: BaseChatMemory,
+		structuredOutputMethod?: 'toolCalling' | 'jsonSchema',
+		enumMapping?: Map<string, string>,
+	) =>
 	async (steps: AgentFinish | AgentAction[]): Promise<AgentFinish | AgentAction[]> => {
+		const isJsonSchemaMode = structuredOutputMethod === 'jsonSchema';
+
 		// Check if the steps contain the 'format_final_json_response' tool invocation.
-		if (Array.isArray(steps)) {
+		if (!isJsonSchemaMode && Array.isArray(steps)) {
 			const responseParserTool = steps.find((step) => step.tool === 'format_final_json_response');
 			if (responseParserTool && outputParser) {
 				const toolInput = responseParserTool.toolInput;
@@ -287,8 +316,38 @@ export const getAgentStepsParser =
 			}
 		}
 
+		if (isJsonSchemaMode && typeof steps === 'object' && (steps as AgentFinish).returnValues) {
+			const finalResponse = (steps as AgentFinish).returnValues;
+			const rawOutput =
+				finalResponse instanceof Object && 'output' in finalResponse
+					? finalResponse.output
+					: finalResponse;
+
+			let trustedOutput: unknown =
+				typeof rawOutput === 'string'
+					? jsonParse<unknown>(rawOutput, { fallbackValue: rawOutput })
+					: rawOutput;
+
+			// Restore original enum values that were sanitized for strict-mode
+			if (enumMapping && enumMapping.size > 0) {
+				trustedOutput = restoreEnumValues(trustedOutput, enumMapping);
+			}
+
+			const returnValues =
+				trustedOutput !== null && typeof trustedOutput === 'object' && !Array.isArray(trustedOutput)
+					? (trustedOutput as Record<string, unknown>)
+					: { output: trustedOutput };
+
+			return handleParsedStepOutput(returnValues, memory);
+		}
+
 		// Otherwise, if the steps contain a returnValues field, try to parse them manually.
-		if (outputParser && typeof steps === 'object' && (steps as AgentFinish).returnValues) {
+		if (
+			!isJsonSchemaMode &&
+			outputParser &&
+			typeof steps === 'object' &&
+			(steps as AgentFinish).returnValues
+		) {
 			const finalResponse = (steps as AgentFinish).returnValues;
 			let parserInput: string;
 
@@ -428,17 +487,32 @@ export async function getTools(
  * @param outputParser - The output parser containing the schema
  * @returns The response_format config object for the model
  */
-export function getResponseFormatConfig(outputParser: N8nOutputParser): Record<string, unknown> {
+/**
+ * Result of getResponseFormatConfig including an optional mapping to restore
+ * original enum values that were sanitized for strict-mode compatibility.
+ */
+export interface ResponseFormatResult {
+	config: Record<string, unknown>;
+	/** Maps sanitized enum string → original string (with newlines etc.) */
+	enumMapping: Map<string, string>;
+}
+
+export function getResponseFormatConfig(outputParser: N8nOutputParser): ResponseFormatResult {
 	const zodSchema = getOutputParserSchema(outputParser);
+
 	// Use 'openaiStrict' target to ensure compatibility with OpenAI's strict mode
 	// This automatically handles 'additionalProperties: false' and requires all fields
 	const jsonSchema = zodToJsonSchema(zodSchema, {
 		target: 'openaiStrict',
 	} as any);
 
+	// Collect sanitized→original mapping for enum values that contain
+	// characters not allowed in strict mode (newlines, tabs, control chars).
+	const enumMapping = new Map<string, string>();
+
 	// Manually ensure strictness as a fallback because zod-to-json-schema's openaiStrict target
 	// might miss some nested requirements in certain environments.
-	const strictSchema = makeSchemaStrict(jsonSchema);
+	const strictSchema = makeSchemaStrict(jsonSchema, enumMapping);
 
 	const config = {
 		type: 'json_schema',
@@ -449,43 +523,115 @@ export function getResponseFormatConfig(outputParser: N8nOutputParser): Record<s
 		},
 	};
 
-	console.log('--- Debug: JSON Schema for Response Format ---');
-	console.log(JSON.stringify(config, null, 2));
-	console.log('----------------------------------------------');
-
-	return config;
+	return { config, enumMapping };
 }
 
 /**
  * Recursively ensures that a JSON schema is compatible with OpenAI's strict mode.
- * - Sets additionalProperties: false for all objects.
- * - Ensures all properties are in the 'required' array.
+ *
+ * OpenAI/OpenRouter strict mode only supports a subset of JSON Schema:
+ *   Supported: type, properties, required, additionalProperties, enum, items,
+ *              anyOf, $ref, $defs, description
+ *   NOT supported: const, $schema, if/then/else, pattern, minItems, maxItems,
+ *                  minLength, maxLength, minimum, maximum, format, default,
+ *                  uniqueItems, patternProperties, not
+ *
+ * This function:
+ * - Sets additionalProperties: false for all objects
+ * - Ensures all properties are in the 'required' array
+ * - Converts unsupported 'const' to single-element 'enum'
+ * - Strips unsupported keywords ($schema, default, format, pattern, min/max, etc.)
  */
-function makeSchemaStrict(schema: any): any {
+/**
+ * Sanitizes a string enum value for OpenAI strict mode.
+ * Strict mode does not allow \n, \r, \t or other control characters in string
+ * literals within the schema. We replace them with spaces so the schema is accepted.
+ *
+ * Returns the sanitized string. If it differs from the original, the caller
+ * should record the mapping so the original value can be restored later.
+ */
+function sanitizeEnumValue(value: string): string {
+	return value.replace(/[\n\r\t]/g, ' ').replace(/[\u0000-\u001F]/g, ' ');
+}
+
+export function makeSchemaStrict(schema: any, enumMapping?: Map<string, string>): any {
 	if (typeof schema !== 'object' || schema === null) return schema;
 
 	const newSchema = { ...schema };
 
+	// --- Strip unsupported JSON Schema keywords ---
+	// These are not allowed in OpenAI/OpenRouter strict mode
+	const unsupportedKeywords = [
+		'$schema',
+		'default',
+		'format',
+		'pattern',
+		'minLength',
+		'maxLength',
+		'minimum',
+		'maximum',
+		'exclusiveMinimum',
+		'exclusiveMaximum',
+		'multipleOf',
+		'minItems',
+		'maxItems',
+		'uniqueItems',
+		'minProperties',
+		'maxProperties',
+		'patternProperties',
+		'not',
+		'if',
+		'then',
+		'else',
+		'examples',
+	];
+	for (const keyword of unsupportedKeywords) {
+		delete newSchema[keyword];
+	}
+
+	// --- Convert 'const' to single-element 'enum' ---
+	// OpenAI strict mode does not support 'const', but 'enum' with one value is equivalent
+	if ('const' in newSchema) {
+		newSchema.enum = [newSchema.const];
+		delete newSchema.const;
+	}
+
+	// --- Sanitize enum string values ---
+	// OpenAI strict mode forbids \n, \r, \t and control characters in string
+	// literals. We replace them with spaces and record the original value in
+	// enumMapping so the caller can restore them after the model responds.
+	if (Array.isArray(newSchema.enum)) {
+		newSchema.enum = newSchema.enum.map((value: unknown) => {
+			if (typeof value !== 'string') return value;
+			const sanitized = sanitizeEnumValue(value);
+			if (sanitized !== value && enumMapping) {
+				enumMapping.set(sanitized, value);
+			}
+			return sanitized;
+		});
+	}
+
+	// --- Recurse into sub-schemas ---
 	if (schema.type === 'object' || schema.properties) {
 		newSchema.additionalProperties = false;
 		if (schema.properties) {
 			newSchema.required = Object.keys(schema.properties);
 			const newProperties: any = {};
 			for (const key of newSchema.required) {
-				newProperties[key] = makeSchemaStrict(schema.properties[key]);
+				newProperties[key] = makeSchemaStrict(schema.properties[key], enumMapping);
 			}
 			newSchema.properties = newProperties;
 		}
 	} else if (schema.type === 'array' || schema.items) {
 		if (schema.items) {
-			newSchema.items = makeSchemaStrict(schema.items);
+			newSchema.items = makeSchemaStrict(schema.items, enumMapping);
 		}
 	} else if (schema.anyOf) {
-		newSchema.anyOf = schema.anyOf.map(makeSchemaStrict);
+		newSchema.anyOf = schema.anyOf.map((s: any) => makeSchemaStrict(s, enumMapping));
 	} else if (schema.allOf) {
-		newSchema.allOf = schema.allOf.map(makeSchemaStrict);
+		newSchema.allOf = schema.allOf.map((s: any) => makeSchemaStrict(s, enumMapping));
 	} else if (schema.oneOf) {
-		newSchema.oneOf = schema.oneOf.map(makeSchemaStrict);
+		newSchema.oneOf = schema.oneOf.map((s: any) => makeSchemaStrict(s, enumMapping));
 	}
 
 	return newSchema;

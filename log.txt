@@ -1,0 +1,470 @@
+
+➜  n8n git:(master) ✗
+➜  n8n git:(master) ✗ pnpm start
+
+> n8n-monorepo@2.8.0 start /home/jirka/programovani/n8n
+> node scripts/os-normalize.mjs --dir packages/cli/bin n8n
+
+$ cd packages/cli/bin
+$ Running (dir: packages/cli/bin) ./n8n
+$ ./n8n
+Initializing n8n process
+n8n ready on ::, port 5678
+n8n Task Broker ready on 127.0.0.1, port 5679
+Failed to start Python task runner in internal mode. because its virtual environment is missing from this system. Launching a Python runner in internal mode is intended only for debugging and is not recommended for production. Users are encouraged to deploy in external mode. See: https://docs.n8n.io/hosting/configuration/task-runners/#setting-up-external-mode
+[license SDK] Skipping renewal on init: license cert is not initialized
+(node:234197) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Registered runner "JS Task Runner" (HK2hx26GrtlagoWerU-j4)
+Version: 2.8.0
+Building workflow dependency index...
+Finished building workflow dependency index. Processed 0 draft workflows, 0 published workflows.
+
+Editor is now accessible via:
+http://localhost:5678
+
+Press "o" to open in Browser.
+(node:234197) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+=== DEBUG: getResponseFormatConfig - START ===
+[1] Zod schema shape keys: [ 'output' ]
+[2] Raw zodToJsonSchema output (keys): [ 'type', 'properties', 'required', 'additionalProperties' ]
+[2] Raw zodToJsonSchema output (full):
+{
+  "type": "object",
+  "properties": {
+    "output": {
+      "type": "object",
+      "properties": {
+        "analyzed_news": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "const": "🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED FROM VENEZUELA TO MIDDLE EAST, JOINING LINCOLN IN PERSIAN GULF\nStay informed. Follow @rageintel",
+                "description": "Must be an exact match from the input list"
+              },
+              "link": {
+                "type": "string",
+                "description": "The URL of the article"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "ukraine-russia",
+                  "middle-east",
+                  "Europe",
+                  "USA",
+                  "other"
+                ]
+              },
+              "verification": {
+                "type": "string",
+                "enum": [
+                  "probably-true",
+                  "probably-false",
+                  "madeup",
+                  "unverifiable"
+                ]
+              },
+              "verification_reasoning": {
+                "type": "string",
+                "description": "Short explanation of why you gave this verification status based on the scraped tool output."
+              },
+              "interest_reason": {
+                "type": "string",
+                "description": "Why is this geopolitically significant?"
+              }
+            },
+            "required": [
+              "content",
+              "link",
+              "category",
+              "verification",
+              "verification_reasoning"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "output"
+  ],
+  "additionalProperties": false
+}
+[3] After makeSchemaStrict (full):
+{
+  "type": "object",
+  "properties": {
+    "output": {
+      "type": "object",
+      "properties": {
+        "analyzed_news": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "description": "Must be an exact match from the input list",
+                "enum": [
+                  "🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED FROM VENEZUELA TO MIDDLE EAST, JOINING LINCOLN IN PERSIAN GULF\nStay informed. Follow @rageintel"
+                ]
+              },
+              "link": {
+                "type": "string",
+                "description": "The URL of the article"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "ukraine-russia",
+                  "middle-east",
+                  "Europe",
+                  "USA",
+                  "other"
+                ]
+              },
+              "verification": {
+                "type": "string",
+                "enum": [
+                  "probably-true",
+                  "probably-false",
+                  "madeup",
+                  "unverifiable"
+                ]
+              },
+              "verification_reasoning": {
+                "type": "string",
+                "description": "Short explanation of why you gave this verification status based on the scraped tool output."
+              },
+              "interest_reason": {
+                "type": "string",
+                "description": "Why is this geopolitically significant?"
+              }
+            },
+            "required": [
+              "content",
+              "link",
+              "category",
+              "verification",
+              "verification_reasoning",
+              "interest_reason"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "analyzed_news"
+      ]
+    }
+  },
+  "required": [
+    "output"
+  ],
+  "additionalProperties": false
+}
+[4] Final response_format config:
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "structured_response",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "output": {
+          "type": "object",
+          "properties": {
+            "analyzed_news": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "Must be an exact match from the input list",
+                    "enum": [
+                      "🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED FROM VENEZUELA TO MIDDLE EAST, JOINING LINCOLN IN PERSIAN GULF\nStay informed. Follow @rageintel"
+                    ]
+                  },
+                  "link": {
+                    "type": "string",
+                    "description": "The URL of the article"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "ukraine-russia",
+                      "middle-east",
+                      "Europe",
+                      "USA",
+                      "other"
+                    ]
+                  },
+                  "verification": {
+                    "type": "string",
+                    "enum": [
+                      "probably-true",
+                      "probably-false",
+                      "madeup",
+                      "unverifiable"
+                    ]
+                  },
+                  "verification_reasoning": {
+                    "type": "string",
+                    "description": "Short explanation of why you gave this verification status based on the scraped tool output."
+                  },
+                  "interest_reason": {
+                    "type": "string",
+                    "description": "Why is this geopolitically significant?"
+                  }
+                },
+                "required": [
+                  "content",
+                  "link",
+                  "category",
+                  "verification",
+                  "verification_reasoning",
+                  "interest_reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "analyzed_news"
+          ]
+        }
+      },
+      "required": [
+        "output"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
+=== DEBUG: getResponseFormatConfig - END ===
+=== DEBUG: createAgentSequence - START ===
+[1] structuredOutputMethod: jsonSchema
+[2] Has outputParser: true
+[3] Has fallbackModel: false
+[4] supportsStrictToolCalling: true
+[5] allTools count: 1
+[5] allTools names: [ 'Think' ]
+[6] bindOptions: {
+  "strict": true
+}
+=== DEBUG: createAgentSequence - END ===
+=== DEBUG: handleLLMStart ===
+[LLM] Serialized LLM info: {
+  "lc": 1,
+  "type": "constructor",
+  "id": [
+    "langchain",
+    "chat_models",
+    "openai",
+    "ChatOpenAI"
+  ],
+  "kwargs": {
+    "openai_api_key": {
+      "lc": 1,
+      "type": "secret",
+      "id": [
+        "OPENAI_API_KEY"
+      ]
+    },
+    "model": "openai/gpt-5-mini",
+    "max_retries": 2,
+    "configuration": {
+      "baseURL": "https://openrouter.ai/api/v1",
+      "fetchOptions": {
+        "dispatcher": {
+          "_events": {},
+          "_eventsCount": 0
+        }
+      }
+    },
+    "model_kwargs": {}
+  }
+}
+[LLM] Number of prompt messages: 1
+[LLM] All invocation_params keys: [
+  'model',               'temperature',
+  'top_p',               'frequency_penalty',
+  'presence_penalty',    'logprobs',
+  'top_logprobs',        'n',
+  'logit_bias',          'stop',
+  'user',                'stream',
+  'functions',           'function_call',
+  'tools',               'tool_choice',
+  'response_format',     'seed',
+  'parallel_tool_calls', 'prompt_cache_key',
+  'verbosity',           'max_tokens'
+]
+[LLM] response_format: {
+  "type": "json_schema",
+  "json_schema": {
+    "name": "structured_response",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "output": {
+          "type": "object",
+          "properties": {
+            "analyzed_news": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "Must be an exact match from the input list",
+                    "enum": [
+                      "🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED FROM VENEZUELA TO MIDDLE EAST, JOINING LINCOLN IN PERSIAN GULF\nStay informed. Follow @rageintel"
+                    ]
+                  },
+                  "link": {
+                    "type": "string",
+                    "description": "The URL of the article"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "ukraine-russia",
+                      "middle-east",
+                      "Europe",
+                      "USA",
+                      "other"
+                    ]
+                  },
+                  "verification": {
+                    "type": "string",
+                    "enum": [
+                      "probably-true",
+                      "probably-false",
+                      "madeup",
+                      "unverifiable"
+                    ]
+                  },
+                  "verification_reasoning": {
+                    "type": "string",
+                    "description": "Short explanation of why you gave this verification status based on the scraped tool output."
+                  },
+                  "interest_reason": {
+                    "type": "string",
+                    "description": "Why is this geopolitically significant?"
+                  }
+                },
+                "required": [
+                  "content",
+                  "link",
+                  "category",
+                  "verification",
+                  "verification_reasoning",
+                  "interest_reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "analyzed_news"
+          ]
+        }
+      },
+      "required": [
+        "output"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
+[LLM] tools count: 1
+[LLM] tool names: [ 'Think' ]
+[LLM] tools (full):
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "Think",
+      "description": "Use the tool to think about something. It will not obtain new information or change the database, but just append the thought to the log. Use it when complex reasoning or some cache memory is needed.\n\n",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  }
+]
+[LLM] model: openai/gpt-5-mini
+[LLM] stream: false
+=== DEBUG: handleLLMStart END ===
+=== DEBUG: handleLLMError ===
+[ERR] Error constructor: NodeApiError
+[ERR] Error message: The `Think` tool is not marked with `strict: true`. Only strict function tools can be auto-parsed
+[ERR] Error name: NodeApiError
+[ERR] All error property names: [
+  'stack',       'message',
+  'cause',       'level',
+  'tags',        'extra',
+  'description', 'errorResponse',
+  'timestamp',   'context',
+  'lineNumber',  'functionality',
+  'name',        'node',
+  'messages',    'httpCode'
+]
+[ERR] err.message: The `Think` tool is not marked with `strict: true`. Only strict function tools can be auto-parsed
+[ERR] err.cause: undefined
+[ERR] err.level: warning
+[ERR] err.tags: {
+  "packageName": "workflow"
+}
+[ERR] err.extra: undefined
+[ERR] err.description: undefined
+[ERR] err.errorResponse: undefined
+[ERR] err.timestamp: 1771258367013
+[ERR] err.context: {}
+[ERR] err.lineNumber: undefined
+[ERR] err.functionality: configuration-node
+[ERR] err.name: NodeApiError
+[ERR] err.node: {
+  "parameters": {
+    "notice": "",
+    "model": "openai/gpt-5-mini",
+    "options": {}
+  },
+  "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+  "typeVersion": 1,
+  "position": [
+    1360,
+    -160
+  ],
+  "id": "18689104-e7a5-4a03-bee4-8f62c1ba6c2b",
+  "name": "OpenRouter Chat Model",
+  "credentials": {
+    "openRouterApi": {
+      "id": "Dfd2KJ5KAwdXWa7j",
+      "name": "OpenRouter account"
+    }
+  }
+}
+[ERR] err.messages: [
+  "The `Think` tool is not marked with `strict: true`. Only strict function tools can be auto-parsed"
+]
+[ERR] err.httpCode: null
+=== DEBUG: handleLLMError END ===

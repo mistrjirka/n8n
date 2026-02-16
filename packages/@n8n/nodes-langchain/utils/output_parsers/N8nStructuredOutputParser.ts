@@ -61,7 +61,16 @@ export class N8nStructuredOutputParser extends StructuredOutputParser<
 			}
 
 			const json = JSON.parse(jsonString.trim());
-			const parsed = await this.schema.parseAsync(json);
+			let parsed: object;
+			try {
+				parsed = await this.schema.parseAsync(json);
+			} catch (parseError) {
+				// Some providers (notably OpenRouter/Azure strict mode) may return strings
+				// with escaped control sequences (e.g. "\\n") where the original schema
+				// expects real control characters ("\n"). Retry once with unescaped values.
+				const normalizedJson = this.normalizeEscapedControlSequences(json);
+				parsed = await this.schema.parseAsync(normalizedJson);
+			}
 
 			let result = (get(parsed, [STRUCTURED_OUTPUT_KEY, STRUCTURED_OUTPUT_OBJECT_KEY]) ??
 				get(parsed, [STRUCTURED_OUTPUT_KEY, STRUCTURED_OUTPUT_ARRAY_KEY]) ??
@@ -118,6 +127,26 @@ export class N8nStructuredOutputParser extends StructuredOutputParser<
 
 			throw nodeError;
 		}
+	}
+
+	private normalizeEscapedControlSequences(value: unknown): unknown {
+		if (typeof value === 'string') {
+			return value.replace(/\\\\n/g, '\n').replace(/\\\\r/g, '\r').replace(/\\\\t/g, '\t');
+		}
+
+		if (Array.isArray(value)) {
+			return value.map((item) => this.normalizeEscapedControlSequences(item));
+		}
+
+		if (value && typeof value === 'object') {
+			const result: Record<string, unknown> = {};
+			for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+				result[key] = this.normalizeEscapedControlSequences(nestedValue);
+			}
+			return result;
+		}
+
+		return value;
 	}
 
 	static async fromZodJsonSchema(

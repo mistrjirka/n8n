@@ -27,6 +27,8 @@ import {
 	getTools,
 	getAgentStepsParser,
 	handleAgentFinishOutput,
+	makeSchemaStrict,
+	restoreEnumValues,
 } from '../../agents/ToolsAgent/common';
 
 function getFakeOutputParser(returnSchema?: ZodType): N8nOutputParser {
@@ -762,6 +764,176 @@ describe('getAgentStepsParser', () => {
 			expect(result).toEqual(steps);
 		});
 	});
+
+	describe('jsonSchema mode', () => {
+		it('should trust provider output and skip local output parser', async () => {
+			const steps: AgentFinish = {
+				returnValues: {
+					output: '{"city":"Berlin","temperature":15}',
+				},
+				log: '',
+			};
+
+			const mockOutputParser = createMockOutputParser({
+				city: 'Paris',
+				temperature: 24,
+			});
+
+			const parser = getAgentStepsParser(mockOutputParser, mockMemory, 'jsonSchema');
+			const result = await parser(steps);
+
+			expect(mockOutputParser.parse).not.toHaveBeenCalled();
+			expect(result).toEqual({
+				returnValues: { output: '{"city":"Berlin","temperature":15}' },
+				log: 'Final response formatted',
+			});
+		});
+
+		it('should wrap primitive trusted output in output key', async () => {
+			const steps: AgentFinish = {
+				returnValues: {
+					output: '"Berlin"',
+				},
+				log: '',
+			};
+
+			const mockOutputParser = createMockOutputParser({ text: 'should not be used' });
+
+			const parser = getAgentStepsParser(mockOutputParser, mockMemory, 'jsonSchema');
+			const result = await parser(steps);
+
+			expect(mockOutputParser.parse).not.toHaveBeenCalled();
+			expect(result).toEqual({
+				returnValues: { output: '{"output":"Berlin"}' },
+				log: 'Final response formatted',
+			});
+		});
+	});
+});
+
+describe('makeSchemaStrict enum sanitization', () => {
+	it('should replace newlines/tabs with spaces in enum values', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'object',
+			properties: {
+				content: {
+					type: 'string',
+					enum: ['line1\nline2\ttab\rcarriage'],
+				},
+			},
+		};
+		const result = makeSchemaStrict(schema, enumMapping);
+		expect(result.properties.content.enum).toEqual(['line1 line2 tab carriage']);
+		expect(enumMapping.get('line1 line2 tab carriage')).toBe('line1\nline2\ttab\rcarriage');
+	});
+
+	it('should not create mapping entries for values without control chars', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'string',
+			enum: ['clean-value', 'another'],
+		};
+		const result = makeSchemaStrict(schema, enumMapping);
+		expect(result.enum).toEqual(['clean-value', 'another']);
+		expect(enumMapping.size).toBe(0);
+	});
+
+	it('should handle emojis and special unicode without mangling', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'string',
+			enum: ['🚨 Breaking\n🇺🇸 News'],
+		};
+		const result = makeSchemaStrict(schema, enumMapping);
+		expect(result.enum).toEqual(['🚨 Breaking 🇺🇸 News']);
+		expect(enumMapping.get('🚨 Breaking 🇺🇸 News')).toBe('🚨 Breaking\n🇺🇸 News');
+	});
+
+	it('should work without enumMapping parameter', () => {
+		const schema = { type: 'string', enum: ['a\nb'] };
+		const result = makeSchemaStrict(schema);
+		expect(result.enum).toEqual(['a b']);
+	});
+});
+
+describe('restoreEnumValues', () => {
+	it('should restore sanitized string values', () => {
+		const mapping = new Map([['line1 line2', 'line1\nline2']]);
+		expect(restoreEnumValues('line1 line2', mapping)).toBe('line1\nline2');
+	});
+
+	it('should leave non-mapped values unchanged', () => {
+		const mapping = new Map([['line1 line2', 'line1\nline2']]);
+		expect(restoreEnumValues('other', mapping)).toBe('other');
+	});
+
+	it('should recurse into objects', () => {
+		const mapping = new Map([['a b', 'a\nb']]);
+		const input = { content: 'a b', category: 'news' };
+		expect(restoreEnumValues(input, mapping)).toEqual({ content: 'a\nb', category: 'news' });
+	});
+
+	it('should recurse into arrays', () => {
+		const mapping = new Map([['a b', 'a\nb']]);
+		const input = [{ content: 'a b' }, { content: 'untouched' }];
+		expect(restoreEnumValues(input, mapping)).toEqual([
+			{ content: 'a\nb' },
+			{ content: 'untouched' },
+		]);
+	});
+
+	it('should handle nested structure matching real workflow output', () => {
+		const mapping = new Map([
+			[
+				'🚨#Breaking:   🇺🇸🇮🇷 USS FORD ORDERED Stay informed.',
+				'🚨#Breaking:  \n🇺🇸🇮🇷 USS FORD ORDERED\nStay informed.',
+			],
+		]);
+		const input = {
+			analyzed_news: [
+				{
+					content: '🚨#Breaking:   🇺🇸🇮🇷 USS FORD ORDERED Stay informed.',
+					category: 'middle-east',
+				},
+			],
+		};
+		const result = restoreEnumValues(input, mapping) as any;
+		expect(result.analyzed_news[0].content).toBe(
+			'🚨#Breaking:  \n🇺🇸🇮🇷 USS FORD ORDERED\nStay informed.',
+		);
+		expect(result.analyzed_news[0].category).toBe('middle-east');
+	});
+
+	it('should pass through non-string/object/array values', () => {
+		const mapping = new Map([['a', 'b']]);
+		expect(restoreEnumValues(42, mapping)).toBe(42);
+		expect(restoreEnumValues(null, mapping)).toBe(null);
+		expect(restoreEnumValues(true, mapping)).toBe(true);
+	});
+});
+
+describe('getAgentStepsParser jsonSchema mode with enum mapping', () => {
+	let mockMemory: BaseChatMemory;
+
+	beforeEach(() => {
+		mockMemory = mock<BaseChatMemory>();
+	});
+
+	it('should restore sanitized enum values in jsonSchema mode', async () => {
+		const enumMapping = new Map([['🚨 Breaking  Stay informed.', '🚨 Breaking\n\nStay informed.']]);
+		const steps: AgentFinish = {
+			returnValues: {
+				output: '{"content":"🚨 Breaking  Stay informed.","cat":"news"}',
+			},
+			log: '',
+		};
+		const mockOutputParser = createMockOutputParser({});
+		const parser = getAgentStepsParser(mockOutputParser, mockMemory, 'jsonSchema', enumMapping);
+		const result = (await parser(steps)) as AgentFinish;
+		expect(mockOutputParser.parse).not.toHaveBeenCalled();
+		expect(result.returnValues.output).toContain('🚨 Breaking\\n\\nStay informed.');
+	});
 });
 
 describe('handleAgentFinishOutput', () => {
@@ -877,5 +1049,188 @@ describe('handleAgentFinishOutput', () => {
 		const result = handleAgentFinishOutput(steps) as AgentFinish;
 
 		expect(result.returnValues.output).toBe('');
+	});
+});
+
+describe('makeSchemaStrict', () => {
+	it('should sanitize enum values containing newlines and record mapping', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'string',
+			enum: [
+				'🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED\nStay informed.',
+				'Line one\nLine two\nLine three',
+			],
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		// Newlines replaced with spaces for strict-mode compatibility
+		expect(result.enum).toEqual([
+			'🚨#Breaking:   🇺🇸🇮🇷 USS GERALD R. FORD ORDERED Stay informed.',
+			'Line one Line two Line three',
+		]);
+		// Mapping records originals
+		expect(enumMapping.size).toBe(2);
+		expect(enumMapping.get('🚨#Breaking:   🇺🇸🇮🇷 USS GERALD R. FORD ORDERED Stay informed.')).toBe(
+			'🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED\nStay informed.',
+		);
+	});
+
+	it('should sanitize enum values containing tabs and carriage returns', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'string',
+			enum: ['col1\tcol2\tcol3', 'line\r\nbreak'],
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		expect(result.enum).toEqual(['col1 col2 col3', 'line  break']);
+		expect(enumMapping.size).toBe(2);
+	});
+
+	it('should preserve enum values with emojis and special unicode', () => {
+		const schema = {
+			type: 'string',
+			enum: ['🇺🇸 USA', '🇷🇺 Russia', '🇮🇷 Iran'],
+		};
+
+		const result = makeSchemaStrict(schema);
+
+		expect(result.enum).toEqual(['🇺🇸 USA', '🇷🇺 Russia', '🇮🇷 Iran']);
+	});
+
+	it('should convert const with newlines to sanitized enum', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'string',
+			const: 'First line\nSecond line',
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		expect(result.const).toBeUndefined();
+		expect(result.enum).toEqual(['First line Second line']);
+		expect(enumMapping.get('First line Second line')).toBe('First line\nSecond line');
+	});
+
+	it('should sanitize enum values in nested object schemas', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'object',
+			properties: {
+				content: {
+					type: 'string',
+					enum: ['🚨#Breaking:\n🇺🇸 USS FORD ORDERED TO MIDDLE EAST'],
+				},
+				category: {
+					type: 'string',
+					enum: ['ukraine-russia', 'middle-east'],
+				},
+			},
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		expect(result.properties.content.enum).toEqual([
+			'🚨#Breaking: 🇺🇸 USS FORD ORDERED TO MIDDLE EAST',
+		]);
+		// Clean values should not generate mapping entries
+		expect(result.properties.category.enum).toEqual(['ukraine-russia', 'middle-east']);
+		expect(enumMapping.size).toBe(1);
+		expect(result.additionalProperties).toBe(false);
+		expect(result.required).toEqual(['content', 'category']);
+	});
+
+	it('should sanitize enum values in array item schemas', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'array',
+			items: {
+				type: 'object',
+				properties: {
+					content: {
+						type: 'string',
+						enum: ['Post #1\nWith newline', 'Post #2\tWith tab'],
+					},
+				},
+			},
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		expect(result.items.properties.content.enum).toEqual([
+			'Post #1 With newline',
+			'Post #2 With tab',
+		]);
+		expect(enumMapping.size).toBe(2);
+		expect(result.items.additionalProperties).toBe(false);
+	});
+
+	it('should strip unsupported keywords while sanitizing enum', () => {
+		const enumMapping = new Map<string, string>();
+		const schema = {
+			type: 'string',
+			enum: ['value\nwith newline'],
+			$schema: 'http://json-schema.org/draft-07/schema#',
+			default: 'some default',
+			minLength: 1,
+			format: 'uri',
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		expect(result.enum).toEqual(['value with newline']);
+		expect(enumMapping.get('value with newline')).toBe('value\nwith newline');
+		expect(result.$schema).toBeUndefined();
+		expect(result.default).toBeUndefined();
+		expect(result.minLength).toBeUndefined();
+		expect(result.format).toBeUndefined();
+	});
+
+	it('should produce valid JSON and sanitized enum for strict-mode acceptance', () => {
+		const enumMapping = new Map<string, string>();
+		const rawContent =
+			'🚨#Breaking:  \n🇺🇸🇮🇷 USS GERALD R. FORD ORDERED FROM VENEZUELA TO MIDDLE EAST, JOINING LINCOLN IN PERSIAN GULF\nStay informed. Follow @rageintel';
+
+		const schema = {
+			type: 'object',
+			properties: {
+				analyzed_news: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							content: {
+								type: 'string',
+								description: 'Must be an exact match from the input list',
+								enum: [rawContent],
+							},
+							category: {
+								type: 'string',
+								enum: ['ukraine-russia', 'middle-east', 'Europe', 'USA', 'other'],
+							},
+						},
+						required: ['content', 'category'],
+					},
+				},
+			},
+		};
+
+		const result = makeSchemaStrict(schema, enumMapping);
+
+		// The enum value must not contain literal newlines (strict-mode forbids them)
+		const sanitizedEnum = result.properties.analyzed_news.items.properties.content.enum[0];
+		expect(sanitizedEnum).not.toContain('\n');
+		expect(sanitizedEnum).not.toContain('\r');
+		expect(sanitizedEnum).not.toContain('\t');
+
+		// Original must be recoverable via mapping
+		expect(enumMapping.get(sanitizedEnum)).toBe(rawContent);
+
+		// Verify round-trip through JSON is clean
+		const serialized = JSON.stringify(result);
+		expect(() => JSON.parse(serialized)).not.toThrow();
 	});
 });
