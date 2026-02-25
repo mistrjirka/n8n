@@ -9,6 +9,8 @@ import { useCanvasTraversal } from '../composables/useCanvasTraversal';
 import { type KeyMap, useKeybindings } from '@/app/composables/useKeybindings';
 import type { PinDataSource } from '@/app/composables/usePinnedData';
 import { CanvasKey } from '@/app/constants';
+import { useUsersStore } from '@/features/settings/users/users.store';
+import { NODE_CREATOR_SHORTCUT_COACHMARK_KEY } from '@/features/shared/nodeCreator/composables/useNodeCreatorShortcutCoachmark';
 import type { NodeCreatorOpenSource } from '@/Interface';
 import type {
 	CanvasConnection,
@@ -66,6 +68,7 @@ import { type ContextMenuAction } from '@/features/shared/contextMenu/composable
 import { useFocusedNodesStore } from '@/features/ai/assistant/focusedNodes.store';
 import { useChatPanelStore } from '@/features/ai/assistant/chatPanel.store';
 import { useChatPanelStateStore } from '@/features/ai/assistant/chatPanelState.store';
+import { useSetupPanelStore } from '@/features/setupPanel/setupPanel.store';
 
 const $style = useCssModule();
 
@@ -160,10 +163,12 @@ const props = withDefaults(
 );
 
 const { isMobileDevice, controlKeyCode } = useDeviceSupport();
+const usersStore = useUsersStore();
 const experimentalNdvStore = useExperimentalNdvStore();
 const focusedNodesStore = useFocusedNodesStore();
 const chatPanelStore = useChatPanelStore();
 const chatPanelStateStore = useChatPanelStateStore();
+const setupPanelStore = useSetupPanelStore();
 
 const isExperimentalNdvActive = computed(() => experimentalNdvStore.isActive(viewport.value.zoom));
 
@@ -212,6 +217,7 @@ const classes = computed(() => ({
 	[$style.canvas]: true,
 	[$style.ready]: !props.loading && isPaneReady.value,
 	[$style.isExperimentalNdvActive]: isExperimentalNdvActive.value,
+	spotlightActive: setupPanelStore.isHighlightActive,
 }));
 
 /**
@@ -363,7 +369,13 @@ const keyMap = computed(() => {
 		d: emitWithSelectedNodes((ids) => emit('update:nodes:enabled', ids)),
 		p: emitWithSelectedNodes((ids) => emit('update:nodes:pin', ids, 'keyboard-shortcut')),
 		f2: emitWithLastSelectedNode((id) => emit('update:node:name', id)),
-		tab: () => emit('create:node', 'tab'),
+		n: () => emit('create:node', 'node_shortcut'),
+		tab: {
+			disabled: () => usersStore.isCalloutDismissed(NODE_CREATOR_SHORTCUT_COACHMARK_KEY),
+			run: () => {
+				props.eventBus.emit('deprecated:tab-shortcut');
+			},
+		},
 		shift_s: () => emit('create:sticky'),
 		shift_f: () => emit('toggle:focus-panel'),
 		ctrl_alt_n: () => emit('create:workflow'),
@@ -1054,6 +1066,7 @@ defineExpose({
 					:event-bus="eventBus"
 					:hovered="nodesHoveredById[nodeProps.id]"
 					:nearby-hovered="nodeProps.id === hoveredTriggerNode.id.value"
+					:highlighted="setupPanelStore.highlightedNodeIds.has(nodeProps.id)"
 					@delete="onDeleteNode"
 					@run="onRunNode"
 					@select="onSelectNode"
@@ -1168,5 +1181,21 @@ defineExpose({
 .minimap-enter-from,
 .minimap-leave-to {
 	opacity: 0;
+}
+
+.spotlightActive {
+	:deep(.vue-flow__edges) {
+		opacity: 0.2;
+		transition: opacity 0.5s ease;
+	}
+
+	:deep(.vue-flow__node) {
+		opacity: 0.4;
+		transition: opacity 0.5s ease;
+	}
+
+	:deep(.vue-flow__node:has(.highlighted)) {
+		opacity: 1;
+	}
 }
 </style>

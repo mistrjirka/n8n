@@ -50,6 +50,7 @@ describe('WorkerServer', () => {
 
 	beforeEach(() => {
 		globalConfig = mock<GlobalConfig>({
+			path: '/',
 			queue: {
 				health: { active: true, port: 5678, address: '::' },
 			},
@@ -57,7 +58,7 @@ describe('WorkerServer', () => {
 				overwrite: { endpoint: '' },
 			},
 			endpoints: {
-				health: 'internal/health',
+				health: '/internal/health',
 			},
 		});
 		jest.restoreAllMocks();
